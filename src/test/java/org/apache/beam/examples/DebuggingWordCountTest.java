@@ -17,18 +17,12 @@
  */
 package org.apache.beam.examples;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import org.apache.beam.examples.DebuggingWordCount.WordCountOptions;
-import org.apache.beam.sdk.testing.TestPipeline;
-import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.io.Files;
 import org.junit.Rule;
-import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/** Tests for {@link DebuggingWordCount}. */
+///** Tests for {@link DebuggingWordCount}. */
 @RunWith(JUnit4.class)
 public class DebuggingWordCountTest {
   @Rule public TemporaryFolder tmpFolder = new TemporaryFolder();
@@ -40,17 +34,17 @@ public class DebuggingWordCountTest {
     return filePath;
   }
 
-  @Test
-  public void testDebuggingWordCount() throws Exception {
-    File inputFile = tmpFolder.newFile();
-    File outputFile = tmpFolder.newFile();
-    Files.write(
-        "stomach secret Flourish message Flourish here Flourish",
-        inputFile,
-        StandardCharsets.UTF_8);
-    WordCountOptions options = TestPipeline.testingPipelineOptions().as(WordCountOptions.class);
-    options.setInputFile(getFilePath(inputFile.getAbsolutePath()));
-    options.setOutput(getFilePath(outputFile.getAbsolutePath()));
-    DebuggingWordCount.runDebuggingWordCount(options);
-  }
+//  @Test
+//  public void testDebuggingWordCount() throws Exception {
+//    File inputFile = tmpFolder.newFile();
+//    File outputFile = tmpFolder.newFile();
+//    Files.write(
+//        "stomach secret Flourish message Flourish here Flourish",
+//        inputFile,
+//        StandardCharsets.UTF_8);
+//    WordCountOptions options = TestPipeline.testingPipelineOptions().as(WordCountOptions.class);
+//    options.setInputFile(getFilePath(inputFile.getAbsolutePath()));
+//    options.setOutput(getFilePath(outputFile.getAbsolutePath()));
+//    DebuggingWordCount.runDebuggingWordCount(options);
+//  }
 }

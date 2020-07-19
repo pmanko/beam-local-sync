@@ -88,7 +88,7 @@ public class MinimalWordCount {
     // the input text (a set of Shakespeare's texts).
 
     // This example reads a public data set consisting of the complete works of Shakespeare.
-    p.apply(TextIO.read().from("gs://apache-beam-samples/shakespeare/*"))
+    p.apply(TextIO.read().from("gs://apache-beam-samples/shakespeare/kinglear.txt"))
 
         // Concept #2: Apply a FlatMapElements transform the PCollection of text lines.
         // This transform splits the lines in PCollection<String>, where each element is an

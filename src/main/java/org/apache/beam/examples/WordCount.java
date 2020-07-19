@@ -15,7 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+ // mvn clean package -DskipTests -P flink-runner
+ // --output=/tmp/patient.txt --runner=FlinkRunner
+ 
 package org.apache.beam.examples;
+
+import java.util.Collection;
+import java.util.Collections;
 
 import org.apache.beam.examples.common.ExampleUtils;
 import org.apache.beam.sdk.Pipeline;
@@ -29,13 +36,22 @@ import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.options.Validation.Required;
 import org.apache.beam.sdk.transforms.Count;
+import org.apache.beam.sdk.transforms.Create;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.MapElements;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.transforms.SimpleFunction;
 import org.apache.beam.sdk.values.KV;
+import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
+
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.rest.client.api.IGenericClient;
+import org.apache.beam.sdk.values.PDone;
+import org.hl7.fhir.r4.model.Patient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An example that counts words in Shakespeare and includes Beam best practices.
@@ -79,36 +95,35 @@ import org.apache.beam.sdk.values.PCollection;
  * }</pre>
  *
  * <p>The input file defaults to a public data set containing the text of of King Lear, by William
- * Shakespeare. You can override it and choose your own input with {@code --inputFile}.
+ * ShakespearWordCounte. You can override it and choose your own input with {@code --inputFile}.
  */
 public class WordCount {
+
+  // Create a context
+  private static FhirContext ctx = FhirContext.forR4();
 
   /**
    * Concept #2: You can make your pipeline assembly code less verbose by defining your DoFns
    * statically out-of-line. This DoFn tokenizes lines of text into individual words; we pass it to
    * a ParDo in the pipeline.
    */
-  static class ExtractWordsFn extends DoFn<String, String> {
-    private final Counter emptyLines = Metrics.counter(ExtractWordsFn.class, "emptyLines");
-    private final Distribution lineLenDist =
-        Metrics.distribution(ExtractWordsFn.class, "lineLenDistro");
+  static class ExtractPatientName extends DoFn<Patient, String> {
 
     @ProcessElement
-    public void processElement(@Element String element, OutputReceiver<String> receiver) {
-      lineLenDist.update(element.length());
-      if (element.trim().isEmpty()) {
-        emptyLines.inc();
-      }
+    public void processElement(@Element Patient element, OutputReceiver<String> receiver) {
+      receiver.output(element.getNameFirstRep().toString());
+    }
+  }
 
-      // Split the line into words.
-      String[] words = element.split(ExampleUtils.TOKENIZER_PATTERN, -1);
+  static class FhirReader extends PTransform<PBegin, PCollection<Patient>> {
+    @Override
+    public PCollection<Patient> expand(PBegin input) {
+      Patient p = new Patient();
+      p.addName().setFamily("Manko").addGiven("Pio");
 
-      // Output each word encountered into the output PCollection.
-      for (String word : words) {
-        if (!word.isEmpty()) {
-          receiver.output(word);
-        }
-      }
+      Collection<Patient> patients = Collections.singletonList(p);
+
+      return input.apply(Create.of(patients));
     }
   }
 
@@ -128,18 +143,15 @@ public class WordCount {
    * Count) as a reusable PTransform subclass. Using composite transforms allows for easy reuse,
    * modular testing, and an improved monitoring experience.
    */
-  public static class CountWords
-      extends PTransform<PCollection<String>, PCollection<KV<String, Long>>> {
+  public static class GetPatientName
+          extends PTransform<PCollection<Patient>, PCollection<String>> {
     @Override
-    public PCollection<KV<String, Long>> expand(PCollection<String> lines) {
+    public PCollection<String> expand(PCollection<Patient> patients) {
 
       // Convert lines of text into individual words.
-      PCollection<String> words = lines.apply(ParDo.of(new ExtractWordsFn()));
+      PCollection<String> patientNames = patients.apply(ParDo.of(new ExtractPatientName()));
 
-      // Count the number of times each word occurs.
-      PCollection<KV<String, Long>> wordCounts = words.apply(Count.perElement());
-
-      return wordCounts;
+      return patientNames;
     }
   }
 
@@ -166,6 +178,7 @@ public class WordCount {
 
     /** Set this required option to specify where to write the output. */
     @Description("Path of the file to write to")
+    @Default.String("/tmp/kinglear-out.txt")
     @Required
     String getOutput();
 
@@ -177,10 +190,9 @@ public class WordCount {
 
     // Concepts #2 and #3: Our pipeline applies the composite CountWords transform, and passes the
     // static FormatAsTextFn() to the ParDo transform.
-    p.apply("ReadLines", TextIO.read().from(options.getInputFile()))
-        .apply(new CountWords())
-        .apply(MapElements.via(new FormatAsTextFn()))
-        .apply("WriteCounts", TextIO.write().to(options.getOutput()));
+    p.apply("GetPatients", new FhirReader())
+        .apply("GetNames", new GetPatientName())
+        .apply("WriteNames", TextIO.write().to(options.getOutput()));
 
     p.run().waitUntilFinish();
   }
