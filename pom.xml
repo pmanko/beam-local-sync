@@ -27,6 +27,9 @@
   <packaging>jar</packaging>
 
   <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
     <beam.version>2.22.0</beam.version>
 
     <bigquery.version>v2-rev20191211-1.30.9</bigquery.version>
@@ -48,6 +51,8 @@
     <maven-surefire-plugin.version>2.21.0</maven-surefire-plugin.version>
     <nemo.version>0.1</nemo.version>
     <flink.artifact.name>beam-runners-flink-1.10</flink.artifact.name>
+
+    <hapifhir_version>5.0.2</hapifhir_version>
   </properties>
 
   <repositories>
@@ -61,6 +66,14 @@
       <snapshots>
         <enabled>true</enabled>
       </snapshots>
+    </repository>
+
+    <repository>
+      <id>oss-snapshots</id>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
     </repository>
   </repositories>
 
@@ -95,7 +108,7 @@
       </plugin>
 
       <!-- Ensure that the Maven jar plugin runs before the Maven
-        shade plugin by listing the plugin higher within the file. -->
+		shade plugin by listing the plugin higher within the file. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -103,9 +116,9 @@
       </plugin>
 
       <!--
-        Configures `mvn package` to produce a bundled jar ("fat jar") for runners
-        that require this for job submission to a cluster.
-      -->
+		Configures `mvn package` to produce a bundled jar ("fat jar") for runners
+		that require this for job submission to a cluster.
+	  -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -130,7 +143,8 @@
                 </filter>
               </filters>
               <transformers>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer
+                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
               </transformers>
             </configuration>
           </execution>
@@ -169,7 +183,7 @@
       </dependencies>
     </profile>
 
-   <profile>
+    <profile>
       <id>portable-runner</id>
       <activation>
         <activeByDefault>true</activeByDefault>
@@ -196,10 +210,10 @@
           <scope>runtime</scope>
         </dependency>
         <!--
-          Apex depends on httpclient version 4.3.6, project has a transitive dependency to httpclient 4.0.1 from
-          google-http-client. Apex dependency version being specified explicitly so that it gets picked up. This
-          can be removed when the project no longer has a dependency on a different httpclient version.
-        -->
+		  Apex depends on httpclient version 4.3.6, project has a transitive dependency to httpclient 4.0.1 from
+		  google-http-client. Apex dependency version being specified explicitly so that it gets picked up. This
+		  can be removed when the project no longer has a dependency on a different httpclient version.
+		-->
         <dependency>
           <groupId>org.apache.httpcomponents</groupId>
           <artifactId>httpclient</artifactId>
@@ -213,9 +227,9 @@
           </exclusions>
         </dependency>
         <!--
-          Apex 3.6 is built against YARN 2.6. Version in the fat jar has to match
-          what's on the cluster, hence we need to repeat the Apex Hadoop dependencies here.
-        -->
+		  Apex 3.6 is built against YARN 2.6. Version in the fat jar has to match
+		  what's on the cluster, hence we need to repeat the Apex Hadoop dependencies here.
+		-->
         <dependency>
           <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-yarn-client</artifactId>
@@ -251,8 +265,8 @@
         <dependency>
           <groupId>org.apache.beam</groupId>
           <!-- Please see the Flink Runner page for an up-to-date list
-               of supported Flink versions and their artifact names:
-               https://beam.apache.org/documentation/runners/flink/ -->
+			   of supported Flink versions and their artifact names:
+			   https://beam.apache.org/documentation/runners/flink/ -->
           <artifactId>${flink.artifact.name}</artifactId>
           <version>${beam.version}</version>
           <scope>runtime</scope>
@@ -263,7 +277,7 @@
     <profile>
       <id>spark-runner</id>
       <!-- Makes the SparkRunner available when running a pipeline. Additionally,
-           overrides some Spark dependencies to Beam-compatible versions. -->
+		   overrides some Spark dependencies to Beam-compatible versions. -->
       <properties>
         <netty.version>4.1.17.Final</netty.version>
       </properties>
@@ -400,7 +414,7 @@
       <version>${google-api-client.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency of google-api-client -->
+			 in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -414,7 +428,7 @@
       <version>${bigquery.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency of google-api-client -->
+			 in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -428,7 +442,7 @@
       <version>${google-http-client.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency of google-api-client -->
+			 in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -442,7 +456,7 @@
       <version>${pubsub.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency of google-api-client -->
+			 in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -472,7 +486,7 @@
     </dependency>
 
     <!-- Hamcrest and JUnit are required dependencies of PAssert,
-         which is used in the main code of DebuggingWordCount example. -->
+		 which is used in the main code of DebuggingWordCount example. -->
     <dependency>
       <groupId>org.hamcrest</groupId>
       <artifactId>hamcrest-core</artifactId>
@@ -505,5 +519,41 @@
       <version>${mockito.version}</version>
       <scope>test</scope>
     </dependency>
+
+
+    <!-- HAPI FHIR CLIENT -->
+    <!-- This dependency includes the core HAPI-FHIR classes -->
+    <dependency>
+      <groupId>ca.uhn.hapi.fhir</groupId>
+      <artifactId>hapi-fhir-base</artifactId>
+      <version>${hapifhir_version}</version>
+    </dependency>
+
+    <!-- Include the client -->
+    <dependency>
+      <groupId>ca.uhn.hapi.fhir</groupId>
+      <artifactId>hapi-fhir-client</artifactId>
+      <version>${hapifhir_version}</version>
+    </dependency>
+
+    <!-- At least one "structures" JAR must also be included -->
+    <dependency>
+      <groupId>ca.uhn.hapi.fhir</groupId>
+      <artifactId>hapi-fhir-structures-r4</artifactId>
+      <version>${hapifhir_version}</version>
+    </dependency>
+
+    <!--
+	HAPI-FHIR uses Logback for logging support. The logback library is included
+	automatically by Maven as a part of the hapi-fhir-base dependency, but you
+	also need to include a logging library. Logback is used here, but log4j
+	would also be fine.
+	-->
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.1.7</version>
+    </dependency>
+
   </dependencies>
 </project>
