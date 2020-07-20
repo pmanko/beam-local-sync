@@ -27,7 +27,7 @@ import org.junit.runners.JUnit4;
 
 /** Tests of WordCount. */
 @RunWith(JUnit4.class)
-public class WordCountTest {
+public class LocalFhirSyncTest {
 
   //  /** Example test that tests a specific {@link DoFn}. */
   //  @Test
