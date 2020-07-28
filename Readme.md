@@ -22,3 +22,14 @@ mvn package exec:java -D exec.mainClass=com.dataradiant.beam.examples.WordCount 
 
 
 org.apache.beam.examples.WordCount
+
+
+## Overview
+
+### Batch Load
+1. In OpenMRS: loop over all relevant patients & their data 
+2. Create a bundle for each patient and send to Queue
+3. Read from Queue and load into HAPI server
+ 
+
+1b. Update:

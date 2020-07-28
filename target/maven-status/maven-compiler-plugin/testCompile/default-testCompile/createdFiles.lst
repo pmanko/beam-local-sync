@@ -1,0 +1,5 @@
+org\itech\shr\beam\subprocess\ExampleEchoPipelineTest$1.class
+org\itech\shr\beam\subprocess\ExampleEchoPipelineTest$EchoInputDoFn.class
+org\itech\shr\beam\LocalFhirSyncTest.class
+org\itech\shr\beam\subprocess\ExampleEchoPipelineTest$2.class
+org\itech\shr\beam\subprocess\ExampleEchoPipelineTest.class

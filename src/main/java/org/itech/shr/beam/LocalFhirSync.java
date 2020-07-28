@@ -24,8 +24,8 @@ package org.itech.shr.beam;
 import java.util.Collection;
 import java.util.Collections;
 
+import ca.uhn.fhir.rest.api.MethodOutcome;
 import org.apache.beam.sdk.Pipeline;
-import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
@@ -35,41 +35,20 @@ import org.apache.beam.sdk.transforms.Create;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
-import org.apache.beam.sdk.transforms.SimpleFunction;
-import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
+import ca.uhn.fhir.rest.client.api.IGenericClient;
 
 import ca.uhn.fhir.context.FhirContext;
+import org.hl7.fhir.instance.model.api.IIdType;
+import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Patient;
+import org.itech.shr.beam.httpio.HttpWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- *  *
- * <p>For a detailed walkthrough of this example, see <a
- * href="https://beam.apache.org/get-started/wordcount-example/">
- * https://beam.apache.org/get-started/wordcount-example/ </a>
- *
- * <p>Basic concepts, also in the MinimalWordCount example: Reading text files; counting a
- * PCollection; writing to text files
- *
- * <p>New Concepts:
- *
- * <pre>
- *   1. Executing a Pipeline both locally and using the selected runner
- *   2. Using ParDo with static DoFns defined out-of-line
- *   3. Building a composite transform
- *   4. Defining your own pipeline options
- * </pre>
- *
- * <p>Concept #1: you can execute this pipeline either locally or using by selecting another runner.
- * These are now command-line options and not hard-coded as they were in the MinimalWordCount
- * example.
- *
- * <p>To change the runner, specify:
- *
- * <pre>{@code
- * --runner=YOUR_SELECTED_RUNNER
- * }</pre>
+ * *
  *
  * <p>To execute this pipeline, specify a local output file (if using the {@code DirectRunner}) or
  * output prefix on a supported distributed file system.
@@ -91,100 +70,120 @@ public class LocalFhirSync {
    * statically out-of-line. This DoFn tokenizes lines of text into individual words; we pass it to
    * a ParDo in the pipeline.
    */
-  static class ExtractPatientName extends DoFn<Patient, String> {
+  static class CompilePatientBundle extends DoFn<Patient, Bundle> {
 
     @ProcessElement
-    public void processElement(@Element Patient element, OutputReceiver<String> receiver) {
-      receiver.output(element.getNameFirstRep().toString());
+    public void processElement(@Element Patient element, OutputReceiver<Bundle> receiver) {
+      String pId = element.getId();
+
+      Bundle patientBundle = new Bundle();
+      patientBundle.setType(Bundle.BundleType.TRANSACTION);
+
+      patientBundle.addEntry()
+              .setResource(element)
+              .getRequest()
+              .setUrl("Patient")
+              .setMethod(Bundle.HTTPVerb.POST);
+
+      IGenericClient client = ctx.newRestfulGenericClient("http://localhost:8080/hapi-fhir-jpaserver/fhir/");
+
+      // Invoke the server create method (and send pretty-printed JSON
+      // encoding to the server
+      // instead of the default which is non-pretty printed XML)
+      MethodOutcome outcome = client.create()
+              .resource(patientBundle)
+              .prettyPrint()
+              .encodedJson()
+              .execute();
+
+      // The MethodOutcome object will contain information about the
+      // response from the server, including the ID of the created
+      // resource, the OperationOutcome response, etc. (assuming that
+      // any of these things were provided by the server! They may not
+      // always be)
+      IIdType id = outcome.getId();
+      System.out.println("Got ID: " + id.getValue());
     }
   }
 
   static class FhirReader extends PTransform<PBegin, PCollection<Patient>> {
+    private static final Logger logger = LoggerFactory.getLogger(HttpWriter.class);
+
     @Override
     public PCollection<Patient> expand(PBegin input) {
-      Patient p = new Patient();
-      p.addName().setFamily("Manko").addGiven("Pio");
+      // Create a client
+      IGenericClient client = ctx.newRestfulGenericClient("http://localhost:8082/openmrs/ws/fhir2/R4");
+      Collection<Patient> patients = Collections.emptyList();
 
-      Collection<Patient> patients = Collections.singletonList(p);
+      Bundle patientList = client.search()
+              .forResource(Patient.class)
+              .returnBundle(Bundle.class)
+              .execute();
+
+      do {
+
+        for (Bundle.BundleEntryComponent entry: patientList.getEntry()) {
+          System.out.println(entry.getFullUrl());
+          patients.add((Patient) entry.getResource());
+        }
+
+        if (patientList.getLink(Bundle.LINK_NEXT) != null)
+          patientList = client.loadPage().next(patientList).execute();
+        else
+          patientList = null;
+      }
+      while (patientList != null);
+
 
       return input.apply(Create.of(patients));
     }
   }
 
-  /** A SimpleFunction that converts a Word and Count into a printable string. */
-  public static class FormatAsTextFn extends SimpleFunction<KV<String, Long>, String> {
+  public static class SendPatientData
+          extends PTransform<PCollection<Patient>, PCollection<Bundle>> {
     @Override
-    public String apply(KV<String, Long> input) {
-      return input.getKey() + ": " + input.getValue();
+    public PCollection<Bundle> expand(PCollection<Patient> patients) {
+
+      PCollection<Bundle> patientData = patients.apply(ParDo.of(new CompilePatientBundle()));
+
+      return patientData;
     }
   }
 
-  /**
-   * A PTransform that converts a PCollection containing lines of text into a PCollection of
-   * formatted word counts.
-   *
-   * <p>Concept #3: This is a custom composite transform that bundles two transforms (ParDo and
-   * Count) as a reusable PTransform subclass. Using composite transforms allows for easy reuse,
-   * modular testing, and an improved monitoring experience.
-   */
-  public static class GetPatientName
-          extends PTransform<PCollection<Patient>, PCollection<String>> {
-    @Override
-    public PCollection<String> expand(PCollection<Patient> patients) {
+  public interface LocalFhirSyncOptions extends PipelineOptions {
 
-      // Convert lines of text into individual words.
-      PCollection<String> patientNames = patients.apply(ParDo.of(new ExtractPatientName()));
+    @Description("Path to the source endpoint")
+    @Default.String("localhost:8082/openmrs/ws/fhir2/R4")
+    String getFhirSource();
 
-      return patientNames;
-    }
-  }
+    void setFhirSource(String url);
 
-  /**
-   * Options supported by {@link LocalFhirSync}.
-   *
-   * <p>Concept #4: Defining your own configuration options. Here, you can add your own arguments to
-   * be processed by the command-line parser, and specify default values for them. You can then
-   * access the options values in your pipeline code.
-   *
-   * <p>Inherits standard configuration options.
-   */
-  public interface WordCountOptions extends PipelineOptions {
-
-    /**
-     * By default, this example reads from a public dataset containing the text of King Lear. Set
-     * this option to choose a different input file or glob.
-     */
-    @Description("Path of the file to read from")
-    @Default.String("gs://apache-beam-samples/shakespeare/kinglear.txt")
-    String getInputFile();
-
-    void setInputFile(String value);
-
-    /** Set this required option to specify where to write the output. */
-    @Description("Path of the file to write to")
-    @Default.String("/tmp/kinglear-out.txt")
+    @Description("Path to the destination endpoint")
+    @Default.String("localhost:8080/")
     @Required
-    String getOutput();
+    String getFhirDest();
 
-    void setOutput(String value);
+    void setFhirDest(String url);
   }
 
-  static void runWordCount(WordCountOptions options) {
+  static void runLocalSync(LocalFhirSyncOptions options) {
+    Collection<Patient> patientList;
+
+    // Create the pipeline.
     Pipeline p = Pipeline.create(options);
 
-    // Concepts #2 and #3: Our pipeline applies the composite CountWords transform, and passes the
-    // static FormatAsTextFn() to the ParDo transform.
-    p.apply("GetPatients", new FhirReader())
-        .apply("GetNames", new GetPatientName())
-        .apply("WriteNames", TextIO.write().to(options.getOutput()));
+    // Apply Create, passing the list and the coder, to create the PCollection.
+    p.apply("Get Patients", new FhirReader()) // .setCoder(StringUtf8Coder.of());
+      .apply("SendPatientData", new SendPatientData());
+//      .apply("SendPatientBundle", new HttpWriter<>(ctx));
 
     p.run().waitUntilFinish();
   }
 
   public static void main(String[] args) {
-    WordCountOptions options =
-        PipelineOptionsFactory.fromArgs(args).withValidation().as(WordCountOptions.class);
+    LocalFhirSyncOptions options =
+        PipelineOptionsFactory.fromArgs(args).withValidation().as(LocalFhirSyncOptions.class);
 
-    runWordCount(options);
+    runLocalSync(options);
   }
 }

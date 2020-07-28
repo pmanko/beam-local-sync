@@ -51,6 +51,7 @@
     <maven-surefire-plugin.version>2.21.0</maven-surefire-plugin.version>
     <nemo.version>0.1</nemo.version>
     <flink.artifact.name>beam-runners-flink-1.10</flink.artifact.name>
+    <asynchttpclient.version>2.10.1</asynchttpclient.version>
 
     <hapifhir_version>5.0.2</hapifhir_version>
   </properties>
@@ -520,6 +521,11 @@
       <scope>test</scope>
     </dependency>
 
+    <dependency>
+      <groupId>org.asynchttpclient</groupId>
+      <artifactId>async-http-client</artifactId>
+      <version>${asynchttpclient.version}</version>
+    </dependency>
 
     <!-- HAPI FHIR CLIENT -->
     <!-- This dependency includes the core HAPI-FHIR classes -->
@@ -553,6 +559,17 @@
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
       <version>1.1.7</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.mayp1998.taskExecutor</groupId>
+      <artifactId>TaskExecutor</artifactId>
+      <version>1.0.5.RELEASE</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-context</artifactId>
+      <version>5.2.8.RELEASE</version>
     </dependency>
 
   </dependencies>
