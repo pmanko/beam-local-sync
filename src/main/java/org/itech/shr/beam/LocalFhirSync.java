@@ -18,13 +18,17 @@
 
  // mvn clean package -DskipTests -P flink-runner
  // --output=/tmp/patient.txt --runner=FlinkRunner
+// org.itech.shr.beam.LocalFhirSync
  
 package org.itech.shr.beam;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 
 import ca.uhn.fhir.rest.api.MethodOutcome;
+import ca.uhn.fhir.rest.client.api.IClientInterceptor;
+import ca.uhn.fhir.rest.client.interceptor.BasicAuthInterceptor;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Description;
@@ -72,6 +76,12 @@ public class LocalFhirSync {
    */
   static class CompilePatientBundle extends DoFn<Patient, Bundle> {
 
+    private final String DEST_URL;
+
+    CompilePatientBundle(String destUrl) {
+      DEST_URL = destUrl;
+    }
+
     @ProcessElement
     public void processElement(@Element Patient element, OutputReceiver<Bundle> receiver) {
       String pId = element.getId();
@@ -80,51 +90,55 @@ public class LocalFhirSync {
       patientBundle.setType(Bundle.BundleType.TRANSACTION);
 
       patientBundle.addEntry()
-              .setResource(element)
+              .setResource(element.copy())
               .getRequest()
               .setUrl("Patient")
               .setMethod(Bundle.HTTPVerb.POST);
 
-      IGenericClient client = ctx.newRestfulGenericClient("http://localhost:8080/hapi-fhir-jpaserver/fhir/");
+      IGenericClient client = ctx.newRestfulGenericClient(DEST_URL);
+      Bundle resp = client.transaction().withBundle(patientBundle).execute();
 
-      // Invoke the server create method (and send pretty-printed JSON
-      // encoding to the server
-      // instead of the default which is non-pretty printed XML)
-      MethodOutcome outcome = client.create()
-              .resource(patientBundle)
-              .prettyPrint()
-              .encodedJson()
-              .execute();
+      // Log the response
+      System.out.println("Saved Patient Bundle:\n" + ctx.newJsonParser().setPrettyPrint(true).encodeResourceToString(resp));
 
-      // The MethodOutcome object will contain information about the
-      // response from the server, including the ID of the created
-      // resource, the OperationOutcome response, etc. (assuming that
-      // any of these things were provided by the server! They may not
-      // always be)
-      IIdType id = outcome.getId();
-      System.out.println("Got ID: " + id.getValue());
     }
   }
 
   static class FhirReader extends PTransform<PBegin, PCollection<Patient>> {
     private static final Logger logger = LoggerFactory.getLogger(HttpWriter.class);
 
+    private final String SOURCE_URL;
+
+
+    public FhirReader(String fhirSource) {
+      SOURCE_URL = fhirSource;
+    }
+
+
+
     @Override
     public PCollection<Patient> expand(PBegin input) {
       // Create a client
-      IGenericClient client = ctx.newRestfulGenericClient("http://localhost:8082/openmrs/ws/fhir2/R4");
-      Collection<Patient> patients = Collections.emptyList();
+      IClientInterceptor authInterceptor = new BasicAuthInterceptor("admin", "Admin123");
+      ctx.getRestfulClientFactory().setSocketTimeout(200 * 1000);
+      IGenericClient client = ctx.newRestfulGenericClient(SOURCE_URL);
+      client.registerInterceptor(authInterceptor);
+
+      ArrayList<Patient> patients = new ArrayList<>();
 
       Bundle patientList = client.search()
               .forResource(Patient.class)
               .returnBundle(Bundle.class)
+              .count(100)
               .execute();
 
       do {
 
         for (Bundle.BundleEntryComponent entry: patientList.getEntry()) {
           System.out.println(entry.getFullUrl());
-          patients.add((Patient) entry.getResource());
+          Patient p = (Patient) entry.getResource();
+          System.out.println(p.getNameFirstRep().getNameAsSingleString());
+          patients.add(p);
         }
 
         if (patientList.getLink(Bundle.LINK_NEXT) != null)
@@ -141,10 +155,17 @@ public class LocalFhirSync {
 
   public static class SendPatientData
           extends PTransform<PCollection<Patient>, PCollection<Bundle>> {
+
+    private final String DEST_URL;
+
+    public SendPatientData(String fhirDest) {
+      DEST_URL = fhirDest;
+    }
+
     @Override
     public PCollection<Bundle> expand(PCollection<Patient> patients) {
 
-      PCollection<Bundle> patientData = patients.apply(ParDo.of(new CompilePatientBundle()));
+      PCollection<Bundle> patientData = patients.apply(ParDo.of(new CompilePatientBundle(DEST_URL)));
 
       return patientData;
     }
@@ -153,13 +174,13 @@ public class LocalFhirSync {
   public interface LocalFhirSyncOptions extends PipelineOptions {
 
     @Description("Path to the source endpoint")
-    @Default.String("localhost:8082/openmrs/ws/fhir2/R4")
+    @Default.String("http://openmrs-server:8080/openmrs/ws/fhir2/R4")
     String getFhirSource();
 
     void setFhirSource(String url);
 
     @Description("Path to the destination endpoint")
-    @Default.String("localhost:8080/")
+    @Default.String("http://openmrs-hapi-server:8080/hapi-fhir-jpaserver/fhir")
     @Required
     String getFhirDest();
 
@@ -173,8 +194,8 @@ public class LocalFhirSync {
     Pipeline p = Pipeline.create(options);
 
     // Apply Create, passing the list and the coder, to create the PCollection.
-    p.apply("Get Patients", new FhirReader()) // .setCoder(StringUtf8Coder.of());
-      .apply("SendPatientData", new SendPatientData());
+    p.apply("Get Patients", new FhirReader(options.getFhirSource())) // .setCoder(StringUtf8Coder.of());
+      .apply("SendPatientData", new SendPatientData(options.getFhirDest()));
 //      .apply("SendPatientBundle", new HttpWriter<>(ctx));
 
     p.run().waitUntilFinish();
