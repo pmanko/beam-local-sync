@@ -22,28 +22,16 @@
 
 package org.itech.shr.beam;
 
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.Array;
-import java.lang.reflect.InvocationTargetException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.model.api.IResource;
 import ca.uhn.fhir.rest.client.api.IClientInterceptor;
 import ca.uhn.fhir.rest.client.api.IGenericClient;
 import ca.uhn.fhir.rest.client.interceptor.BasicAuthInterceptor;
-import ca.uhn.fhir.rest.gclient.ICriterion;
-import ca.uhn.fhir.rest.gclient.IQuery;
-import ca.uhn.fhir.rest.gclient.IUntypedQuery;
-import ca.uhn.fhir.rest.gclient.ReferenceClientParam;
-import lombok.SneakyThrows;
 import org.apache.beam.sdk.Pipeline;
-import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
@@ -51,25 +39,18 @@ import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.options.Validation.Required;
 import org.apache.beam.sdk.transforms.Create;
 import org.apache.beam.sdk.transforms.DoFn;
-import org.apache.beam.sdk.transforms.GroupByKey;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
-import org.apache.beam.sdk.transforms.join.KeyedPCollectionTuple;
-import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PDone;
-import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.r4.model.AllergyIntolerance;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Condition;
 import org.hl7.fhir.r4.model.DiagnosticReport;
-import org.hl7.fhir.r4.model.Element;
 import org.hl7.fhir.r4.model.Encounter;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
-import org.hl7.fhir.r4.model.Resource;
-import org.hl7.fhir.r4.model.ServiceRequest;
 import org.itech.shr.beam.httpio.HttpWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,7 +71,7 @@ public class LocalFhirSync {
 	private static FhirContext ctx = FhirContext.forR4();
 	private static String SOURCE_URL;
 	private static String DEST_URL;
-	private static List<Class> RESOURCES = Arrays.asList(Encounter.class, Condition.class, DiagnosticReport.class, ServiceRequest.class, AllergyIntolerance.class);
+	private static List<Class> RESOURCES = Arrays.asList(Encounter.class, Condition.class, DiagnosticReport.class, /*ServiceRequest.class,*/ AllergyIntolerance.class);
 
 
 	// Bundle resp = client.transaction().withBundle(patientBundle).execute();
@@ -98,20 +79,20 @@ public class LocalFhirSync {
 	// Transforms
 
 	// 1. Read in patient list
-	static class ReadPatients extends PTransform<PBegin, PCollection<KV<String, Bundle>>> {
+	static class ReadPatients extends PTransform<PBegin, PCollection<Bundle>> {
 
 		private static final Logger logger = LoggerFactory.getLogger(HttpWriter.class);
 
 		@Override
-		public PCollection<KV<String, Bundle>> expand(PBegin input) {
+		public PCollection<Bundle> expand(PBegin input) {
 			// Create a client
 			IGenericClient client = getSourceClient();
 
 			PCollection<Patient> patientPCollection;
 			PCollection<Class> resourcePCollection;
-			PCollection<KV<String, Bundle>> patientResources;
+			PCollection<Bundle> patientResources;
 
-			ArrayList<Patient> patients = new ArrayList<>();
+			ArrayList<Bundle> patientBundles = new ArrayList<>();
 
 			Bundle patientList = client.search()
 					.forResource(Patient.class)
@@ -124,8 +105,17 @@ public class LocalFhirSync {
 				for (Bundle.BundleEntryComponent entry : patientList.getEntry()) {
 					System.out.println(entry.getFullUrl());
 					Patient p = (Patient) entry.getResource();
-					System.out.println(p.getNameFirstRep().getNameAsSingleString());
-					patients.add(p);
+					Bundle pBundle = new Bundle();
+					pBundle.setType(Bundle.BundleType.TRANSACTION)
+							.addEntry()
+							.setFullUrl(p.getId())
+							.setResource(p)
+							.getRequest()
+							.setUrl("Patient")
+							.setMethod(Bundle.HTTPVerb.POST);
+
+					System.out.println(p.getId());
+					patientBundles.add(pBundle);
 				}
 
 				if (patientList.getLink(Bundle.LINK_NEXT) != null)
@@ -135,33 +125,16 @@ public class LocalFhirSync {
 			}
 			while (patientList != null);
 
-			patientPCollection = input.apply(Create.of(patients));
+			patientResources = input.apply(Create.of(patientBundles));
 
-			return patientPCollection.apply(ParDo.of(new DoFn<Patient, KV<String, Bundle>>() {
-				@ProcessElement
-				public void processElement(@Element Patient patient, OutputReceiver<KV<String, Bundle>> outputReceiver)
-						throws IllegalAccessException, InstantiationException, NoSuchMethodException,
-						InvocationTargetException {
-					for (Class resource:RESOURCES) {
-						Bundle b = new Bundle();
-
-						b.addEntry().setResource((Resource) resource.getDeclaredConstructor().newInstance());
-						outputReceiver.output(KV.of(patient.getId(), b));
-					}
-
-					Bundle patientBundle = new Bundle();
-					patientBundle.addEntry().setResource(patient);
-
-					outputReceiver.output(KV.of(patient.getId(), patientBundle));
-				}
-			}));
+			return patientResources;
 		}
 	}
 
 	// 2. Fetch Patient Resources
-	public static class FetchPatientResources extends PTransform<PCollection<KV<String, Bundle>>, PCollection<KV<String, Bundle>>> {
+	public static class FetchPatientResources extends PTransform<PCollection<Bundle>, PCollection<Bundle>> {
 		@Override
-		public PCollection<KV<String, Bundle>> expand(PCollection<KV<String, Bundle>> resourceList) {
+		public PCollection<Bundle> expand(PCollection<Bundle> resourceList) {
 			return resourceList.apply(ParDo.of(new FetchResources()));
 		}
 
@@ -169,47 +142,68 @@ public class LocalFhirSync {
 
 	// 3. Send Bundle of resources to server
 	public static class SendPatientData
-			extends PTransform<PCollection<KV<String, Bundle>>, PDone> {
+			extends PTransform<PCollection<Bundle>, PDone> {
 
 		@Override
-		public PDone expand(PCollection<KV<String, Bundle>> patientData) {
+		public PDone expand(PCollection<Bundle> patientData) {
 
-			patientData
-					.apply(GroupByKey.create())
-					.apply(ParDo.of(new DoFn<KV<String, Iterable<Bundle>>, Void>() {
-						@ProcessElement
-						public void processElement(@Element KV<String, Iterable<Bundle>> resources) {
-							for (Bundle resource : resources.getValue()) {
-								System.out.println("----\n" + ctx.newJsonParser().setPrettyPrint(false)
-										.encodeResourceToString(resource));
-							}
-						}
-					}));
+			patientData.apply(ParDo.of(new DoFn<Bundle, Void>() {
+				@ProcessElement
+				public void processElement(@Element Bundle resources) {
+					System.out.println("Posting bundle of " + resources.getEntry().size() + " for Patient " + resources.getEntryFirstRep().getId());
+					IGenericClient client = ctx.newRestfulGenericClient(DEST_URL);
+					Bundle resp = client.transaction().withBundle(resources.copy()).execute();
 
-			
+					// Log the response
+					System.out.println("Saved Patient Bundle:\n" + ctx.newJsonParser().setPrettyPrint(true).encodeResourceToString(resp));
+
+				}
+			}));
+
 			return PDone.in(patientData.getPipeline());
 		}
 	}
 
 	// Helper DoFns
-	static class FetchResources extends DoFn<KV<String, Bundle>, KV<String, Bundle>> {
+	static class FetchResources extends DoFn<Bundle, Bundle> {
 		@ProcessElement
-		public void processElement(@Element KV<String, Bundle> resourceInfo, OutputReceiver<KV<String,Bundle>> outputReceiver) {
+		public void processElement(@Element Bundle patientBundle, OutputReceiver<Bundle> outputReceiver) {
 			IGenericClient client = getSourceClient();
-			Bundle result;
-			String pId = resourceInfo.getKey();
-			Bundle resourceBundle = resourceInfo.getValue();
-			Resource resource = resourceBundle.getEntryFirstRep().getResource();
+			Bundle result = patientBundle.copy();
+			Bundle resourceList;
 
-			if(resource instanceof Observation) result = client.search().forResource(Observation.class).where(Observation.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else if(resource instanceof Condition) result = client.search().forResource(Condition.class).where(Condition.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else if(resource instanceof Encounter) result = client.search().forResource(Encounter.class).where(Encounter.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else if(resource instanceof ServiceRequest) result = client.search().forResource(ServiceRequest.class).where(ServiceRequest.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else if(resource instanceof DiagnosticReport) result = client.search().forResource(DiagnosticReport.class).where(DiagnosticReport.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else if(resource instanceof AllergyIntolerance) result = client.search().forResource(AllergyIntolerance.class).where(AllergyIntolerance.PATIENT.hasId(pId)).returnBundle(Bundle.class).execute();
-			else result = resourceBundle;
+//			Bundle resourceBundle = resourceInfo.getValue();
+			Patient p = (Patient) result.getEntryFirstRep().getResource();
+			String pId = p.getId().split("/")[7];
 
-			outputReceiver.output(KV.of(pId, result));
+			// result = client.search().forResource(Condition.class).where(Condition.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
+
+			// TODO: PARALLELIZE
+			resourceList = client.search().forResource(Observation.class).where(Observation.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
+			addToBundle(result, resourceList);
+
+			resourceList = client.search().forResource(Condition.class).where(Condition.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
+			addToBundle(result, resourceList);
+
+			resourceList = client.search().forResource(Encounter.class).where(Encounter.SUBJECT.hasId(pId)).returnBundle(Bundle.class).execute();
+			addToBundle(result, resourceList);
+
+			resourceList = client.search().forResource(AllergyIntolerance.class).where(AllergyIntolerance.PATIENT.hasId(pId)).returnBundle(Bundle.class).execute();
+			addToBundle(result, resourceList);
+
+			outputReceiver.output(result);
+		}
+
+		private void addToBundle(Bundle result, Bundle resourceList) {
+			for (Bundle.BundleEntryComponent entry : resourceList.getEntry()) {
+				System.out.println(entry.getResource().getId());
+				result.addEntry()
+						.setFullUrl(entry.getId())
+						.setResource(entry.getResource())
+						.getRequest()
+						.setUrl(entry.fhirType())
+						.setMethod(Bundle.HTTPVerb.POST);
+			}
 		}
 	}
 
@@ -249,6 +243,10 @@ public class LocalFhirSync {
 		// Apply Create, passing the list and the coder, to create the PCollection.
 		p.apply("Get Patients", new ReadPatients())
 				.apply("FetchPatientResources", new FetchPatientResources())
+				//.apply(GroupByKey.create())
+//				.apply(Keys.<String>create())
+//				.apply("WriteNames", TextIO.write().to("/dev/beam/hmm.txt"));
+
 				.apply("SendPatientData", new SendPatientData());
 		p.run().waitUntilFinish();
 	}
